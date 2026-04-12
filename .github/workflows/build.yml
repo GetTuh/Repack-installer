@@ -15,6 +15,9 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb flatpak flatpak-builder
 
+      - name: Add Flathub remote
+        run: sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: repack-installer.flatpak
