@@ -9,7 +9,7 @@ Designed for [Bazzite](https://bazzite.gg), where umu-run comes pre-installed.
 ## Install
 
 ```bash
-flatpak install --user https://github.com/GetTuh/Linux-repack-installer/releases/latest/download/repack-installer.flatpak && flatpak run io.github.GetTuh.RepackInstaller
+wget -O /tmp/repack-installer.flatpak https://github.com/GetTuh/Linux-repack-installer/releases/latest/download/repack-installer.flatpak && flatpak install --user /tmp/repack-installer.flatpak
 ```
 
 ## Requirements
