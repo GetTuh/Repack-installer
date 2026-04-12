@@ -1,0 +1,46 @@
+app-id: io.github.WineInstaller
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+
+# org.winehq.Wine ships Wine binaries at /app/bin/wine, winepath, etc.
+base: org.winehq.Wine
+base-version: stable-25.08
+
+command: run.sh
+
+finish-args:
+  # Display
+  - --share=ipc
+  - --socket=x11          # Wine does not support native Wayland; XWayland is used
+  - --socket=wayland      # kept so the GNOME shell can still negotiate the session
+  # GPU acceleration
+  - --device=dri
+  # Audio
+  - --socket=pulseaudio
+  # Home directory access so Wine can see installer files at their real paths
+  - --filesystem=home
+  # 32-bit Wine support (required for many installers)
+  - --allow=multiarch
+  # Let Wine find the user's font cache and D-Bus session
+  - --share=network
+  - --socket=session-bus
+
+modules:
+  - name: wine-installer
+    buildsystem: simple
+    build-commands:
+      # Main Python application
+      - install -Dm755 wine_installer.py /app/bin/wine_installer.py
+      # Shell launcher (sets WINEPREFIX before exec)
+      - install -Dm755 run.sh /app/bin/run.sh
+      # Desktop entry
+      - install -Dm644 io.github.WineInstaller.desktop
+          /app/share/applications/io.github.WineInstaller.desktop
+    sources:
+      - type: file
+        path: wine_installer.py
+      - type: file
+        path: run.sh
+      - type: file
+        path: io.github.WineInstaller.desktop
