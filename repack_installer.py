@@ -9,7 +9,7 @@ import sys
 import subprocess
 import threading
 
-APP_ID = 'io.github.RepackInstaller'
+APP_ID = 'io.github.GetTuh.RepackInstaller'
 WINEPREFIX = os.path.join(os.path.expanduser('~'), '.local', 'share',
                           'repackinstaller', 'prefix')
 

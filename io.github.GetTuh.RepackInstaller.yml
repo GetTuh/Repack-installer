@@ -1,4 +1,4 @@
-app-id: io.github.RepackInstaller
+app-id: io.github.GetTuh.RepackInstaller
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
@@ -20,12 +20,12 @@ modules:
     build-commands:
       - install -Dm755 repack_installer.py /app/bin/repack_installer.py
       - install -Dm755 run.sh /app/bin/run.sh
-      - install -Dm644 io.github.RepackInstaller.desktop
-          /app/share/applications/io.github.RepackInstaller.desktop
+      - install -Dm644 io.github.GetTuh.RepackInstaller.desktop
+          /app/share/applications/io.github.GetTuh.RepackInstaller.desktop
     sources:
       - type: file
         path: repack_installer.py
       - type: file
         path: run.sh
       - type: file
-        path: io.github.RepackInstaller.desktop
+        path: io.github.GetTuh.RepackInstaller.desktop
