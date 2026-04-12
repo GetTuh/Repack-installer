@@ -2,40 +2,24 @@ app-id: io.github.RepackInstaller
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
-
-# org.winehq.Wine ships Wine binaries at /app/bin/wine, winepath, etc.
-base: org.winehq.Wine
-base-version: wow64-25.08
-
 command: run.sh
 
 finish-args:
-  # Display
   - --share=ipc
-  - --socket=x11          # Wine does not support native Wayland; XWayland is used
-  - --socket=wayland      # kept so the GNOME shell can still negotiate the session
-  # GPU acceleration
+  - --socket=wayland
+  - --socket=fallback-x11
   - --device=dri
-  # Audio
   - --socket=pulseaudio
-  # Home directory access so Wine can see installer files at their real paths
   - --filesystem=home
-  # GTK file portal (suppresses GVFS peer-to-peer warning)
   - --filesystem=xdg-run/gvfsd
-  # wow64 handles 32-bit apps natively — no multiarch needed
-  # Let Wine find the user's font cache and D-Bus session
-  - --share=network
-  - --socket=session-bus
+  - --talk-name=org.freedesktop.Flatpak
 
 modules:
   - name: repack-installer
     buildsystem: simple
     build-commands:
-      # Main Python application
       - install -Dm755 repack_installer.py /app/bin/repack_installer.py
-      # Shell launcher (sets WINEPREFIX before exec)
       - install -Dm755 run.sh /app/bin/run.sh
-      # Desktop entry
       - install -Dm644 io.github.RepackInstaller.desktop
           /app/share/applications/io.github.RepackInstaller.desktop
     sources:

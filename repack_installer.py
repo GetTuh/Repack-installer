@@ -10,10 +10,21 @@ import subprocess
 import threading
 
 APP_ID = 'io.github.RepackInstaller'
-WINEPREFIX = os.path.join(
-    os.environ.get('XDG_DATA_HOME', os.path.expanduser('~/.local/share')),
-    'repackinstaller', 'prefix'
-)
+WINEPREFIX = os.path.join(os.path.expanduser('~'), '.local', 'share',
+                          'repackinstaller', 'prefix')
+
+
+def _umu_cmd(*args, exe_dir=None):
+    cmd = [
+        'flatpak-spawn', '--host',
+        f'--env=WINEPREFIX={WINEPREFIX}',
+        '--env=GAMEID=0',
+        '--env=UMU_RUNTIME_UPDATE=0',
+    ]
+    if exe_dir:
+        cmd += [f'--directory={exe_dir}']
+    cmd += ['umu-run'] + list(args)
+    return cmd
 
 
 class WineInstallerWindow(Adw.ApplicationWindow):
@@ -22,8 +33,9 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.set_title('Repack Installer')
         self.set_default_size(500, 340)
         self._exe_path = None
-        self._wine_proc = None
+        self._proc = None
         self._build_ui()
+        threading.Thread(target=self._check_umu, daemon=True).start()
 
     def _build_ui(self):
         toolbar_view = Adw.ToolbarView()
@@ -42,7 +54,6 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         main_box.set_margin_end(24)
         clamp.set_child(main_box)
 
-        # --- File selection ---
         file_group = Adw.PreferencesGroup(title='Setup Executable')
         main_box.append(file_group)
 
@@ -50,27 +61,27 @@ class WineInstallerWindow(Adw.ApplicationWindow):
             title='No file selected',
             subtitle='Choose a Windows installer (.exe)'
         )
-        browse_btn = Gtk.Button(label='Browse…')
-        browse_btn.add_css_class('suggested-action')
-        browse_btn.set_valign(Gtk.Align.CENTER)
-        browse_btn.connect('clicked', self._on_browse)
-        self.file_row.add_suffix(browse_btn)
+        self.browse_btn = Gtk.Button(label='Browse…')
+        self.browse_btn.add_css_class('suggested-action')
+        self.browse_btn.set_valign(Gtk.Align.CENTER)
+        self.browse_btn.set_sensitive(False)
+        self.browse_btn.connect('clicked', self._on_browse)
+        self.file_row.add_suffix(self.browse_btn)
         file_group.add(self.file_row)
 
-        # --- Status ---
         status_group = Adw.PreferencesGroup(title='Status')
         main_box.append(status_group)
 
         self.status_row = Adw.ActionRow(
-            title='Idle',
-            subtitle='Select a setup.exe to get started'
+            title='Checking for umu-run…',
+            subtitle='Please wait'
         )
         self.spinner = Gtk.Spinner()
         self.spinner.set_valign(Gtk.Align.CENTER)
+        self.spinner.start()
         self.status_row.add_prefix(self.spinner)
         status_group.add(self.status_row)
 
-        # --- Install button ---
         self.install_btn = Gtk.Button(label='Install')
         self.install_btn.add_css_class('suggested-action')
         self.install_btn.add_css_class('pill')
@@ -79,9 +90,17 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.install_btn.connect('clicked', self._on_install)
         main_box.append(self.install_btn)
 
-    # ------------------------------------------------------------------
-    # File picker
-    # ------------------------------------------------------------------
+    def _check_umu(self):
+        result = subprocess.run(
+            ['flatpak-spawn', '--host', 'sh', '-c', 'command -v umu-run'],
+            capture_output=True
+        )
+        if result.returncode == 0:
+            self._idle(self._set_status, 'Ready', 'Select a setup.exe to get started', False)
+            self._idle(self.browse_btn.set_sensitive, True)
+        else:
+            self._idle(self._set_status, 'umu-run not found',
+                       'Install umu-launcher on the host system (pre-installed on Bazzite)', False)
 
     def _on_browse(self, _btn):
         exe_filter = Gtk.FileFilter()
@@ -115,76 +134,48 @@ class WineInstallerWindow(Adw.ApplicationWindow):
             self.install_btn.set_sensitive(True)
             self._set_status('Ready', f'Selected: {name}', False)
 
-    # ------------------------------------------------------------------
-    # Install logic
-    # ------------------------------------------------------------------
-
     def _on_install(self, _btn):
         if not self._exe_path:
             return
         self.install_btn.set_sensitive(False)
-        self._set_status('Starting…', 'Launching Wine…', True)
+        self.browse_btn.set_sensitive(False)
+        self._set_status('Starting…', 'Launching umu-run…', True)
         threading.Thread(target=self._run_install, daemon=True).start()
 
     def _run_install(self):
-        env = os.environ.copy()
-        env['WINEPREFIX'] = WINEPREFIX
-        # Ensure Wine can reach the X display (required inside Flatpak sandbox)
-        if 'DISPLAY' not in env:
-            env['DISPLAY'] = ':0'
-
-        # Create prefix directory so Wine doesn't complain.
-        try:
-            os.makedirs(WINEPREFIX, exist_ok=True)
-        except OSError as e:
-            self._idle(self._set_status, 'Error', f'Cannot create WINEPREFIX: {e}', False)
-            self._idle(self.install_btn.set_sensitive, True)
-            return
-
-        # Use 'wine start /unix' — sets the working directory to the exe's
-        # folder automatically, which repack installers require to find
-        # their .bin parts next to setup.exe.
         exe_dir = os.path.dirname(self._exe_path)
-        self._idle(self._set_status, 'Installing…', self._exe_path, True)
-        try:
-            self._wine_proc = subprocess.Popen(
-                ['wine', 'start', '/unix', self._exe_path],
-                env=env,
-                cwd=exe_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            _stdout, stderr = self._wine_proc.communicate()
-            rc = self._wine_proc.returncode
-        except FileNotFoundError:
-            self._idle(self._set_status, 'Error', 'wine binary not found.', False)
-            self._idle(self.install_btn.set_sensitive, True)
+
+        self._idle(self._set_status, 'Installing vcrun2022…', 'winetricks vcrun2022', True)
+        if not self._run_cmd(_umu_cmd('winetricks', 'vcrun2022'), label='winetricks'):
             return
+
+        self._idle(self._set_status, 'Running installer…', self._exe_path, True)
+        self._run_cmd(_umu_cmd(self._exe_path, exe_dir=exe_dir), label='umu-run')
+
+        self._idle(self._set_status, 'Done', 'Installer finished.', False)
+        self._idle(self.install_btn.set_sensitive, True)
+        self._idle(self.browse_btn.set_sensitive, True)
+
+    def _run_cmd(self, cmd, label):
+        print(f'[repack-installer] {label}: {cmd}', flush=True)
+        try:
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                          stderr=subprocess.STDOUT)
+            for line in self._proc.stdout:
+                print(f'[{label}] {line.decode(errors="replace").rstrip()}', flush=True)
+            rc = self._proc.wait()
+            print(f'[repack-installer] {label} exited rc={rc}', flush=True)
         except Exception as e:
             self._idle(self._set_status, 'Error', str(e)[:200], False)
             self._idle(self.install_btn.set_sensitive, True)
-            return
+            self._idle(self.browse_btn.set_sensitive, True)
+            return False
         finally:
-            self._wine_proc = None
-
-        # Many NSIS/Inno Setup installers return non-zero even on success or
-        # user-cancel, so we don't treat every non-zero as a hard failure.
-        if rc == 0:
-            self._idle(self._set_status, 'Done', 'Installation completed.', False)
-        else:
-            tail = stderr.decode(errors='replace').strip()[-200:]
-            msg = tail or f'Installer exited with code {rc}.'
-            self._idle(self._set_status, 'Finished', msg, False)
-
-        self._idle(self.install_btn.set_sensitive, True)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+            self._proc = None
+        return True
 
     @staticmethod
     def _idle(fn, *args):
-        """Schedule fn(*args) on the GTK main loop from any thread."""
         GLib.idle_add(fn, *args)
 
     def _set_status(self, title, subtitle, spinning):
