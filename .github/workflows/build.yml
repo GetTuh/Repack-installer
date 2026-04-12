@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb flatpak flatpak-builder
+
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: repack-installer.flatpak
