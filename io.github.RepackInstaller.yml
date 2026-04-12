@@ -5,7 +5,7 @@ sdk: org.gnome.Sdk
 
 # org.winehq.Wine ships Wine binaries at /app/bin/wine, winepath, etc.
 base: org.winehq.Wine
-base-version: stable-25.08
+base-version: wow64-25.08
 
 command: run.sh
 
@@ -20,8 +20,9 @@ finish-args:
   - --socket=pulseaudio
   # Home directory access so Wine can see installer files at their real paths
   - --filesystem=home
-  # 32-bit Wine support (required for many installers)
-  - --allow=multiarch
+  # GTK file portal (suppresses GVFS peer-to-peer warning)
+  - --filesystem=xdg-run/gvfsd
+  # wow64 handles 32-bit apps natively — no multiarch needed
   # Let Wine find the user's font cache and D-Bus session
   - --share=network
   - --socket=session-bus

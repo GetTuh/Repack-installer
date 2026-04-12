@@ -123,12 +123,15 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         if not self._exe_path:
             return
         self.install_btn.set_sensitive(False)
-        self._set_status('Converting path…', 'Running winepath -w …', True)
+        self._set_status('Starting…', 'Launching Wine…', True)
         threading.Thread(target=self._run_install, daemon=True).start()
 
     def _run_install(self):
         env = os.environ.copy()
         env['WINEPREFIX'] = WINEPREFIX
+        # Ensure Wine can reach the X display (required inside Flatpak sandbox)
+        if 'DISPLAY' not in env:
+            env['DISPLAY'] = ':0'
 
         # Create prefix directory so Wine doesn't complain.
         try:
@@ -138,39 +141,16 @@ class WineInstallerWindow(Adw.ApplicationWindow):
             self._idle(self.install_btn.set_sensitive, True)
             return
 
-        # Step 1 — translate host path → Wine Z:\ path
-        try:
-            result = subprocess.run(
-                ['winepath', '-w', self._exe_path],
-                capture_output=True, text=True, env=env, timeout=20
-            )
-        except FileNotFoundError:
-            self._idle(self._set_status, 'Error', 'winepath not found. Is Wine installed?', False)
-            self._idle(self.install_btn.set_sensitive, True)
-            return
-        except subprocess.TimeoutExpired:
-            self._idle(self._set_status, 'Error', 'winepath timed out.', False)
-            self._idle(self.install_btn.set_sensitive, True)
-            return
-
-        if result.returncode != 0:
-            msg = result.stderr.strip() or f'winepath exited {result.returncode}'
-            self._idle(self._set_status, 'Error', msg[:200], False)
-            self._idle(self.install_btn.set_sensitive, True)
-            return
-
-        z_path = result.stdout.strip()
-        if not z_path:
-            self._idle(self._set_status, 'Error', 'winepath returned empty path.', False)
-            self._idle(self.install_btn.set_sensitive, True)
-            return
-
-        # Step 2 — launch the installer via Wine
-        self._idle(self._set_status, 'Installing…', z_path, True)
+        # Use 'wine start /unix' — sets the working directory to the exe's
+        # folder automatically, which repack installers require to find
+        # their .bin parts next to setup.exe.
+        exe_dir = os.path.dirname(self._exe_path)
+        self._idle(self._set_status, 'Installing…', self._exe_path, True)
         try:
             self._wine_proc = subprocess.Popen(
-                ['wine', z_path],
+                ['wine', 'start', '/unix', self._exe_path],
                 env=env,
+                cwd=exe_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
@@ -187,11 +167,14 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         finally:
             self._wine_proc = None
 
+        # Many NSIS/Inno Setup installers return non-zero even on success or
+        # user-cancel, so we don't treat every non-zero as a hard failure.
         if rc == 0:
-            self._idle(self._set_status, 'Done', 'Installation completed successfully.', False)
+            self._idle(self._set_status, 'Done', 'Installation completed.', False)
         else:
             tail = stderr.decode(errors='replace').strip()[-200:]
-            self._idle(self._set_status, f'Finished (exit {rc})', tail or 'No error output.', False)
+            msg = tail or f'Installer exited with code {rc}.'
+            self._idle(self._set_status, 'Finished', msg, False)
 
         self._idle(self.install_btn.set_sensitive, True)
 
