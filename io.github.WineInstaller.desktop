@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=Wine Installer
-Comment=Run Windows setup executables via Wine
-Exec=run.sh
-Icon=io.github.WineInstaller
-Terminal=false
-Type=Application
-Categories=Utility;

@@ -9,17 +9,17 @@ import sys
 import subprocess
 import threading
 
-APP_ID = 'io.github.WineInstaller'
+APP_ID = 'io.github.RepackInstaller'
 WINEPREFIX = os.path.join(
     os.environ.get('XDG_DATA_HOME', os.path.expanduser('~/.local/share')),
-    'wineinstaller', 'prefix'
+    'repackinstaller', 'prefix'
 )
 
 
 class WineInstallerWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.set_title('Wine Installer')
+        self.set_title('Repack Installer')
         self.set_default_size(500, 340)
         self._exe_path = None
         self._wine_proc = None
@@ -214,7 +214,7 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
 
-class WineInstallerApp(Adw.Application):
+class RepackInstallerApp(Adw.Application):
     def __init__(self):
         super().__init__(
             application_id=APP_ID,
@@ -228,7 +228,7 @@ class WineInstallerApp(Adw.Application):
 
 
 def main():
-    app = WineInstallerApp()
+    app = RepackInstallerApp()
     return app.run(sys.argv)
 
 

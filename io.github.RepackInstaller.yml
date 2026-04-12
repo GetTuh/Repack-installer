@@ -1,4 +1,4 @@
-app-id: io.github.WineInstaller
+app-id: io.github.RepackInstaller
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
@@ -27,20 +27,20 @@ finish-args:
   - --socket=session-bus
 
 modules:
-  - name: wine-installer
+  - name: repack-installer
     buildsystem: simple
     build-commands:
       # Main Python application
-      - install -Dm755 wine_installer.py /app/bin/wine_installer.py
+      - install -Dm755 repack_installer.py /app/bin/repack_installer.py
       # Shell launcher (sets WINEPREFIX before exec)
       - install -Dm755 run.sh /app/bin/run.sh
       # Desktop entry
-      - install -Dm644 io.github.WineInstaller.desktop
-          /app/share/applications/io.github.WineInstaller.desktop
+      - install -Dm644 io.github.RepackInstaller.desktop
+          /app/share/applications/io.github.RepackInstaller.desktop
     sources:
       - type: file
-        path: wine_installer.py
+        path: repack_installer.py
       - type: file
         path: run.sh
       - type: file
-        path: io.github.WineInstaller.desktop
+        path: io.github.RepackInstaller.desktop

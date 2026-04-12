@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Repack Installer
+Comment=Run Windows repack installers via Wine
+Exec=run.sh
+Icon=io.github.RepackInstaller
+Terminal=false
+Type=Application
+Categories=Utility;
