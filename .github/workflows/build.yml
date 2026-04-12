@@ -15,8 +15,10 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb flatpak flatpak-builder
 
-      - name: Add Flathub remote
-        run: flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Add Flathub remote and pre-install SDK
+        run: |
+          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y --noninteractive flathub org.gnome.Platform//50 org.gnome.Sdk//50
 
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
