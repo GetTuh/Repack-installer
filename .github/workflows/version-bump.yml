@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -39,3 +40,15 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "${{ steps.next.outputs.version }}"
           git push origin "${{ steps.next.outputs.version }}"
+
+      - name: Trigger build & publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A tag pushed using the default GITHUB_TOKEN does not trigger other
+          # workflows (GitHub suppresses that to avoid recursive runs), so
+          # build.yml's `push: tags: v*` trigger never fires on its own.
+          # Dispatch it directly, targeting the new tag so build.yml sees
+          # github.ref as refs/tags/<version> and cuts a proper versioned
+          # release instead of falling back to the "latest" release.
+          gh workflow run build.yml --ref "${{ steps.next.outputs.version }}"
