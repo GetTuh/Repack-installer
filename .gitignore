@@ -1,3 +1,4 @@
 .claude/settings.json
 HeroicGamesLauncher
-umu-launcher    
+umu-launcher
+__pycache__/

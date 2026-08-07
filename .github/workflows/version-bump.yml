@@ -48,7 +48,11 @@ jobs:
           # A tag pushed using the default GITHUB_TOKEN does not trigger other
           # workflows (GitHub suppresses that to avoid recursive runs), so
           # build.yml's `push: tags: v*` trigger never fires on its own.
-          # Dispatch it directly, targeting the new tag so build.yml sees
-          # github.ref as refs/tags/<version> and cuts a proper versioned
-          # release instead of falling back to the "latest" release.
-          gh workflow run build.yml --ref "${{ steps.next.outputs.version }}"
+          # Dispatch it directly. Deliberately targeting `master` (not the new
+          # tag) here: the auto-created `github-pages` deployment environment
+          # restricts deployments to the default branch, so a run dispatched
+          # against a tag ref silently fails to publish to Pages even though
+          # the build+release steps succeed. master and the tag point at the
+          # same commit at this point, so nothing is lost — the version is
+          # passed explicitly instead of being inferred from the ref.
+          gh workflow run build.yml --ref master -f version="${{ steps.next.outputs.version }}"
