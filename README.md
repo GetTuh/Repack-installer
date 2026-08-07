@@ -4,7 +4,7 @@ A minimal GTK4 + libadwaita app for running Windows repack installers (FitGirl, 
 
 Pick a `setup.exe`, click Install. Automatically runs vcrun2022 via winetricks first, then launches the installer. Uses an isolated Wine prefix that won't touch your existing setup.
 
-Designed for [Bazzite](https://bazzite.gg), where umu-run comes pre-installed.
+Should run on any umu-run installed distro (Bazzite, CachyOS, etc) and autoinstalls it on Fedora based distros. 
 
 ## Install
 
@@ -14,7 +14,8 @@ wget -O /tmp/repack-installer.flatpak https://github.com/GetTuh/Repack-installer
 
 ## Requirements
 
-- umu-run on the host (`umu-launcher`, pre-installed on Bazzite)
+- umu-run on the host (`umu-launcher`, pre-installed on Bazzite). 
+    - On Fedora, offers to install the [umu-launcher from the relases](https://github.com/Open-Wine-Components/umu-launcher/releases)
 - Flatpak
 
 ## Build from source
