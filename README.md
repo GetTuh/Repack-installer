@@ -8,6 +8,21 @@ Should run on any umu-run installed distro (Bazzite, CachyOS, etc) and autoinsta
 
 ## Install
 
+Add the repo once, then install (and later update) via Flatpak:
+
+```bash
+flatpak remote-add --if-not-exists --user repack-installer https://gettuh.github.io/Repack-installer/repackinstaller.flatpakrepo
+flatpak install --user repack-installer io.github.GetTuh.RepackInstaller
+```
+
+Update anytime with:
+
+```bash
+flatpak update --user
+```
+
+Or grab [Release](https://github.com/GetTuh/Repack-installer/releases) - no autoupdates, you'll have to rerun the installer:
+
 ```bash
 wget -O /tmp/repack-installer.flatpak https://github.com/GetTuh/Repack-installer/releases/download/latest/repack-installer.flatpak && flatpak install --user /tmp/repack-installer.flatpak
 ```

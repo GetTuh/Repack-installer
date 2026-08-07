@@ -27,6 +27,10 @@ jobs:
           bundle: repack-installer.flatpak
           manifest-path: io.github.GetTuh.RepackInstaller.yml
           cache-key: flatpak-builder-${{ github.sha }}
+          repo-dir: repo
+
+      - name: Update repo metadata
+        run: flatpak build-update-repo repo
 
       - name: Create release
         uses: softprops/action-gh-release@v3
@@ -34,3 +38,28 @@ jobs:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
           name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Latest Build' }}
           files: repack-installer.flatpak
+
+      - name: Assemble Pages site
+        run: |
+          mkdir -p site
+          cp -r repo site/repo
+          cp repackinstaller.flatpakrepo site/repackinstaller.flatpakrepo
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
