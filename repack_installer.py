@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 
 APP_ID = 'io.github.GetTuh.RepackInstaller'
@@ -29,11 +30,12 @@ BUNDLED_UMU_VERSION_FILE = os.path.join(BUNDLED_UMU_DIR, '.version')
 UMU_RELEASES_API = ('https://api.github.com/repos/'
                      'Open-Wine-Components/umu-launcher/releases/latest')
 
+HEROIC_APP_ID = 'com.heroicgameslauncher.hgl'
 HEROIC_CONFIG_CANDIDATES = [
-    os.path.join(os.path.expanduser('~'), '.var', 'app',
-                 'com.heroicgameslauncher.hgl', 'config', 'heroic'),
+    os.path.join(os.path.expanduser('~'), '.var', 'app', HEROIC_APP_ID, 'config', 'heroic'),
     os.path.join(os.path.expanduser('~'), '.config', 'heroic'),
 ]
+ART_SEARCH_URL = 'https://steamgrid.usebottles.com/api/search/'
 
 _EXE_DENYLIST_SUBSTRINGS = (
     'unins', 'vcredist', 'vc_redist', 'dxsetup', 'directx', 'dotnet',
@@ -124,7 +126,36 @@ def _find_heroic_config_dir():
     return None
 
 
-def _heroic_add_game(heroic_dir, title, executable, wineprefix):
+def _fetch_art_url(title):
+    url = ART_SEARCH_URL + urllib.parse.quote(title)
+    req = urllib.request.Request(url, headers={'User-Agent': 'repack-installer'})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status != 200:
+                return None
+            data = json.loads(resp.read().decode())
+            return data if isinstance(data, str) and data.startswith('http') else None
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            json.JSONDecodeError, OSError):
+        return None
+
+
+def _heroic_is_running():
+    result = subprocess.run(
+        ['flatpak-spawn', '--host', 'flatpak', 'ps', '--columns=application'],
+        capture_output=True, text=True
+    )
+    return HEROIC_APP_ID in result.stdout.split()
+
+
+def _restart_heroic():
+    subprocess.run(['flatpak-spawn', '--host', 'flatpak', 'kill', HEROIC_APP_ID],
+                   capture_output=True)
+    subprocess.Popen(['flatpak-spawn', '--host', 'flatpak', 'run', HEROIC_APP_ID],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _heroic_add_game(heroic_dir, title, executable, wineprefix, art_url=None):
     library_path = os.path.join(heroic_dir, 'sideload_apps', 'library.json')
     library = {'games': []}
     if os.path.exists(library_path):
@@ -143,9 +174,9 @@ def _heroic_add_game(heroic_dir, title, executable, wineprefix):
             'is_dlc': False
         },
         'folder_name': os.path.dirname(executable),
-        'art_cover': '',
+        'art_cover': art_url or '',
         'is_installed': True,
-        'art_square': '',
+        'art_square': art_url or '',
         'canRunOffline': True,
         'browserUrl': '',
         'customUserAgent': '',
@@ -311,6 +342,12 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.prefix_group.set_visible(False)
         main_box.append(self.prefix_group)
 
+        manual_expander = Adw.ExpanderRow(
+            title='Manual install',
+            subtitle='Wine prefix path, for other launchers or manual setup'
+        )
+        self.prefix_group.add(manual_expander)
+
         self.prefix_row = Adw.ActionRow(
             title='Wine prefix',
             subtitle='Copy this into Heroic (or another launcher) as the Wine prefix for this game'
@@ -320,7 +357,7 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         copy_btn.set_tooltip_text('Copy prefix path')
         copy_btn.connect('clicked', self._on_copy_prefix)
         self.prefix_row.add_suffix(copy_btn)
-        self.prefix_group.add(self.prefix_row)
+        manual_expander.add_row(self.prefix_row)
 
         prefix_hint = Gtk.Label(
             label=('When adding this game in Heroic, click "Show Wine settings" in the '
@@ -330,10 +367,11 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         prefix_hint.set_wrap(True)
         prefix_hint.set_margin_start(12)
         prefix_hint.set_margin_end(12)
+        prefix_hint.set_margin_top(6)
         prefix_hint.set_margin_bottom(6)
         prefix_hint.add_css_class('dim-label')
         prefix_hint.add_css_class('caption')
-        self.prefix_group.add(prefix_hint)
+        manual_expander.add_row(prefix_hint)
 
         self.exe_row = Adw.EntryRow(title='Game Executable (best guess — verify this)')
         self.exe_row.set_visible(False)
@@ -353,6 +391,17 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.heroic_add_btn.connect('clicked', self._on_add_to_heroic)
         self.heroic_row.add_suffix(self.heroic_add_btn)
         self.prefix_group.add(self.heroic_row)
+
+        self.heroic_restart_row = Adw.ActionRow(
+            title='Heroic is running',
+            subtitle='Restart it to see the new game in your library'
+        )
+        self.heroic_restart_row.set_visible(False)
+        self.heroic_restart_btn = Gtk.Button(label='Restart Heroic')
+        self.heroic_restart_btn.set_valign(Gtk.Align.CENTER)
+        self.heroic_restart_btn.connect('clicked', self._on_restart_heroic)
+        self.heroic_restart_row.add_suffix(self.heroic_restart_btn)
+        self.prefix_group.add(self.heroic_restart_row)
 
         log_label = Gtk.Label(label='Log', xalign=0)
         log_label.add_css_class('heading')
@@ -644,18 +693,43 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         executable = self.exe_row.get_text().strip()
         if not info or not executable:
             return
+        self.heroic_add_btn.set_sensitive(False)
+        self.heroic_add_btn.set_label('Adding…')
+        threading.Thread(target=self._add_to_heroic_flow, args=(info, executable), daemon=True).start()
+
+    def _add_to_heroic_flow(self, info, executable):
+        title = info['title']
+        self._log(f'Searching cover art for "{title}"…')
+        art_url = _fetch_art_url(title)
+        self._log(f'Found cover art: {art_url}' if art_url else 'No cover art found')
+
         try:
             app_name = _heroic_add_game(
-                info['heroic_dir'], info['title'], executable, info['wineprefix'])
+                info['heroic_dir'], title, executable, info['wineprefix'], art_url=art_url)
         except (OSError, json.JSONDecodeError) as e:
             self._log(f'Could not update Heroic library: {e}')
-            self.heroic_row.set_subtitle(f'Failed: {e}')
+            self._idle(self.heroic_row.set_subtitle, f'Failed: {e}')
+            self._idle(self.heroic_add_btn.set_sensitive, True)
+            self._idle(self.heroic_add_btn.set_label, 'Add')
             return
-        self.heroic_row.set_title('Added to Heroic')
-        self.heroic_row.set_subtitle(f'"{info["title"]}" → {executable}')
-        self.heroic_add_btn.set_sensitive(False)
-        self.heroic_add_btn.set_label('Added')
-        self._log(f'Added to Heroic library as "{info["title"]}" (app_name={app_name})')
+
+        self._idle(self.heroic_row.set_title, 'Added to Heroic')
+        self._idle(self.heroic_row.set_subtitle, f'"{title}" → {executable}')
+        self._idle(self.heroic_add_btn.set_label, 'Added')
+        self._log(f'Added to Heroic library as "{title}" (app_name={app_name})')
+
+        if _heroic_is_running():
+            self._idle(self.heroic_restart_row.set_visible, True)
+
+    def _on_restart_heroic(self, _btn):
+        self.heroic_restart_btn.set_sensitive(False)
+        self.heroic_restart_row.set_subtitle('Restarting…')
+        threading.Thread(target=self._restart_heroic_flow, daemon=True).start()
+
+    def _restart_heroic_flow(self):
+        _restart_heroic()
+        self._idle(self.heroic_restart_row.set_subtitle, 'Restarted')
+        self._log('Restarted Heroic')
 
     def _on_copy_prefix(self, _btn):
         if self._last_prefix:
