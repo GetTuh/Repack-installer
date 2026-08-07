@@ -1,0 +1,41 @@
+name: Auto Version Bump
+
+on:
+  push:
+    branches:
+      - master
+
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: next
+        run: |
+          git fetch --tags
+          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            next="v0.1.0"
+          else
+            ver="${latest#v}"
+            IFS='.' read -r major minor patch <<< "$ver"
+            next="v${major}.${minor}.$((patch + 1))"
+          fi
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Tag and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.next.outputs.version }}"
+          git push origin "${{ steps.next.outputs.version }}"
