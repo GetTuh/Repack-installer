@@ -20,8 +20,9 @@ import urllib.request
 
 APP_ID = 'io.github.GetTuh.RepackInstaller'
 DATA_DIR = os.path.join(os.path.expanduser('~'), '.local', 'share', 'repackinstaller')
-SHARED_WINEPREFIX = os.path.join(DATA_DIR, 'prefix')
-GAMES_PREFIX_ROOT = os.path.join(DATA_DIR, 'prefixes')
+GAMES_ROOT = os.path.join(os.path.expanduser('~'), 'games-repacks')
+SHARED_WINEPREFIX = os.path.join(GAMES_ROOT, 'shared-prefix')
+GAMES_PREFIX_ROOT = GAMES_ROOT
 BUNDLED_UMU_DIR = os.path.join(DATA_DIR, 'bin')
 BUNDLED_UMU_PATH = os.path.join(BUNDLED_UMU_DIR, 'umu-run')
 BUNDLED_UMU_VERSION_FILE = os.path.join(BUNDLED_UMU_DIR, '.version')
@@ -222,6 +223,7 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self._proc = None
         self._last_error = None
         self._last_prefix = None
+        self._last_exe = None
         self._build_ui()
         threading.Thread(target=self._check_umu, daemon=True).start()
 
@@ -332,6 +334,19 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         prefix_hint.add_css_class('dim-label')
         prefix_hint.add_css_class('caption')
         self.prefix_group.add(prefix_hint)
+
+        self.exe_row = Adw.ActionRow(
+            title='Detected game executable',
+            subtitle='Best guess — paste this as the executable when adding the game'
+        )
+        self.exe_row.set_subtitle_lines(0)
+        self.exe_row.set_visible(False)
+        exe_copy_btn = Gtk.Button(icon_name='edit-copy-symbolic')
+        exe_copy_btn.set_valign(Gtk.Align.CENTER)
+        exe_copy_btn.set_tooltip_text('Copy executable path')
+        exe_copy_btn.connect('clicked', self._on_copy_exe)
+        self.exe_row.add_suffix(exe_copy_btn)
+        self.prefix_group.add(self.exe_row)
 
         self.heroic_row = Adw.ActionRow()
         self.heroic_row.set_subtitle_lines(0)
@@ -592,12 +607,9 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.prefix_row.set_subtitle(wineprefix)
         self.prefix_group.set_visible(True)
 
-        heroic_dir = _find_heroic_config_dir()
-        if not heroic_dir:
-            self._log('Heroic not detected on this system — skipping library integration')
-            return GLib.SOURCE_REMOVE
-
         if not candidates:
+            self._last_exe = None
+            self.exe_row.set_visible(False)
             self._log('Could not identify the installed game executable — '
                       'add it to Heroic manually using the prefix above')
             return GLib.SOURCE_REMOVE
@@ -606,6 +618,17 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         confident = len(candidates) == 1
         if not confident:
             self._log(f'Multiple candidate executables found, guessing the largest: {candidates}')
+
+        self._last_exe = executable
+        self.exe_row.set_subtitle(
+            executable if confident else
+            f'{executable} (best guess — multiple new .exe files found, verify this)')
+        self.exe_row.set_visible(True)
+
+        heroic_dir = _find_heroic_config_dir()
+        if not heroic_dir:
+            self._log('Heroic not detected on this system — skipping library integration')
+            return GLib.SOURCE_REMOVE
 
         try:
             app_name = _heroic_add_game(heroic_dir, title, executable, wineprefix)
@@ -628,6 +651,10 @@ class WineInstallerWindow(Adw.ApplicationWindow):
     def _on_copy_prefix(self, _btn):
         if self._last_prefix:
             self.get_clipboard().set(self._last_prefix)
+
+    def _on_copy_exe(self, _btn):
+        if self._last_exe:
+            self.get_clipboard().set(self._last_exe)
 
     def _run_cmd(self, cmd, label, success_check=None):
         print(f'[repack-installer] {label}: {cmd}', flush=True)
