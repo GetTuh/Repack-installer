@@ -34,6 +34,10 @@ def _umu_cmd(*args, exe_dir=None):
     return cmd
 
 
+def _already_installed(output):
+    return 'already installed' in output.lower()
+
+
 def _host_has_cmd(cmd):
     result = subprocess.run(
         ['flatpak-spawn', '--host', 'sh', '-c', f'command -v {cmd}'],
@@ -333,7 +337,8 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         exe_dir = os.path.dirname(self._exe_path)
 
         self._idle(self._set_status, 'Installing vcrun2022…', 'winetricks vcrun2022', True)
-        if not self._run_cmd(_umu_cmd('winetricks', 'vcrun2022'), label='winetricks'):
+        if not self._run_cmd(_umu_cmd('winetricks', 'vcrun2022'), label='winetricks',
+                             success_check=_already_installed):
             self._idle(self._set_status, 'Error', self._last_error or 'winetricks failed', False)
             self._idle(self.install_btn.set_sensitive, True)
             self._idle(self.browse_btn.set_sensitive, True)
@@ -350,23 +355,29 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self._idle(self.install_btn.set_sensitive, True)
         self._idle(self.browse_btn.set_sensitive, True)
 
-    def _run_cmd(self, cmd, label):
+    def _run_cmd(self, cmd, label, success_check=None):
         print(f'[repack-installer] {label}: {cmd}', flush=True)
         self._log(f'$ {label}: {" ".join(cmd)}')
         self._last_error = None
+        output_lines = []
         try:
             self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                           stderr=subprocess.STDOUT)
             for line in self._proc.stdout:
                 text = line.decode(errors='replace').rstrip()
+                output_lines.append(text)
                 print(f'[{label}] {text}', flush=True)
                 self._log(f'[{label}] {text}')
             rc = self._proc.wait()
             print(f'[repack-installer] {label} exited rc={rc}', flush=True)
             self._log(f'[{label}] exited rc={rc}')
-            if rc != 0:
+            ok = rc == 0
+            if not ok and success_check and success_check('\n'.join(output_lines)):
+                self._log(f'[{label}] treating exit code {rc} as success')
+                ok = True
+            if not ok:
                 self._last_error = f'{label} exited with code {rc}'
-            return rc == 0
+            return ok
         except Exception as e:
             self._last_error = str(e)[:200]
             self._log(f'[{label}] error: {self._last_error}')
