@@ -19,6 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Bake app version
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          fi
+          VERSION="${VERSION#v}"
+          VERSION="${VERSION:-dev}"
+          sed -i "s/^APP_VERSION = .*/APP_VERSION = '$VERSION'/" repack_installer.py
+
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb flatpak flatpak-builder
 

@@ -20,6 +20,8 @@ import urllib.parse
 import urllib.request
 
 APP_ID = 'io.github.GetTuh.RepackInstaller'
+APP_VERSION = 'dev'
+LOG_MAX_LINES = 2000
 DATA_DIR = os.path.join(os.path.expanduser('~'), '.local', 'share', 'repackinstaller')
 GAMES_ROOT = os.path.join(os.path.expanduser('~'), 'Games', 'Heroic', 'games-repacks')
 SHARED_WINEPREFIX = os.path.join(GAMES_ROOT, 'shared-prefix')
@@ -375,6 +377,12 @@ class WineInstallerWindow(Adw.ApplicationWindow):
 
         self.exe_row = Adw.EntryRow(title='Game Executable (best guess — verify this)')
         self.exe_row.set_visible(False)
+        self.exe_row.connect('changed', self._on_exe_changed)
+        exe_browse_btn = Gtk.Button(icon_name='document-open-symbolic')
+        exe_browse_btn.set_valign(Gtk.Align.CENTER)
+        exe_browse_btn.set_tooltip_text('Browse for the executable')
+        exe_browse_btn.connect('clicked', self._on_browse_exe)
+        self.exe_row.add_suffix(exe_browse_btn)
         exe_copy_btn = Gtk.Button(icon_name='edit-copy-symbolic')
         exe_copy_btn.set_valign(Gtk.Align.CENTER)
         exe_copy_btn.set_tooltip_text('Copy executable path')
@@ -425,12 +433,24 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         log_scroller.set_child(self.log_view)
         main_box.append(log_scroller)
 
+        version_label = Gtk.Label(label=f'v{APP_VERSION}')
+        version_label.add_css_class('dim-label')
+        version_label.add_css_class('caption')
+        version_label.set_halign(Gtk.Align.CENTER)
+        main_box.append(version_label)
+
     def _log(self, text):
         GLib.idle_add(self._append_log, text)
 
     def _append_log(self, text):
         end_iter = self.log_buffer.get_end_iter()
         self.log_buffer.insert(end_iter, text + '\n')
+
+        overflow = self.log_buffer.get_line_count() - LOG_MAX_LINES
+        if overflow > 0:
+            _, cutoff = self.log_buffer.get_iter_at_line(overflow)
+            self.log_buffer.delete(self.log_buffer.get_start_iter(), cutoff)
+
         self.log_view.scroll_mark_onscreen(self.log_buffer.get_insert())
         return GLib.SOURCE_REMOVE
 
@@ -603,6 +623,9 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.browse_btn.set_sensitive(False)
         self.prefix_group.set_visible(False)
         self.heroic_row.set_visible(False)
+        self.heroic_restart_row.set_visible(False)
+        self.heroic_restart_row.set_subtitle('Restart it to see the new game in your library')
+        self.heroic_restart_btn.set_sensitive(True)
         self._set_status('Starting…', 'Launching umu-run…', True)
         threading.Thread(target=self._run_install, daemon=True).start()
 
@@ -657,20 +680,21 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.prefix_row.set_subtitle(wineprefix)
         self.prefix_group.set_visible(True)
 
-        if not candidates:
-            self.exe_row.set_visible(False)
-            self.heroic_row.set_visible(False)
-            self._log('Could not identify the installed game executable — '
-                      'add it to Heroic manually using the prefix above')
-            return GLib.SOURCE_REMOVE
-
-        executable = candidates[0]
+        executable = candidates[0] if candidates else ''
         confident = len(candidates) == 1
-        if not confident:
+        if candidates and not confident:
             self._log(f'Multiple candidate executables found, guessing the largest: {candidates}')
+        elif not candidates:
+            self._log('Could not automatically identify the installed game executable — '
+                      'browse to it below')
 
-        self.exe_row.set_title('Game Executable' if confident else
-                               'Game Executable (multiple found — verify this)')
+        if candidates:
+            self.exe_row.set_title('Game Executable' if confident else
+                                   'Game Executable (multiple found — verify this)')
+            self.exe_row.remove_css_class('warning')
+        else:
+            self.exe_row.set_title('Game Executable (not found — browse to select it)')
+            self.exe_row.add_css_class('warning')
         self.exe_row.set_text(executable)
         self.exe_row.set_visible(True)
 
@@ -684,9 +708,42 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.heroic_row.set_title('Add to Heroic')
         self.heroic_row.set_subtitle(f'Uses the game name and executable above for "{title}"')
         self.heroic_add_btn.set_label('Add')
-        self.heroic_add_btn.set_sensitive(True)
+        self.heroic_add_btn.set_sensitive(bool(executable))
         self.heroic_row.set_visible(True)
         return GLib.SOURCE_REMOVE
+
+    def _on_exe_changed(self, *_args):
+        if self._pending_heroic is not None and self.heroic_add_btn.get_label() != 'Added':
+            self.heroic_add_btn.set_sensitive(bool(self.exe_row.get_text().strip()))
+
+    def _on_browse_exe(self, _btn):
+        exe_filter = Gtk.FileFilter()
+        exe_filter.set_name('Windows Executables (*.exe)')
+        exe_filter.add_pattern('*.exe')
+        exe_filter.add_pattern('*.EXE')
+
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(exe_filter)
+
+        dialog = Gtk.FileDialog(title='Select Game Executable')
+        dialog.set_filters(filters)
+        dialog.set_default_filter(exe_filter)
+
+        if self._last_prefix:
+            drive_c = os.path.join(self._last_prefix, 'drive_c')
+            if os.path.isdir(drive_c):
+                dialog.set_initial_folder(Gio.File.new_for_path(drive_c))
+
+        dialog.open(self, None, self._on_exe_file_chosen)
+
+    def _on_exe_file_chosen(self, dialog, result):
+        try:
+            file = dialog.open_finish(result)
+        except GLib.Error:
+            return
+        if file:
+            self.exe_row.set_text(file.get_path())
+            self.exe_row.remove_css_class('warning')
 
     def _on_add_to_heroic(self, _btn):
         info = self._pending_heroic

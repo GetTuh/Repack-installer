@@ -1,14 +1,16 @@
 # Repack Installer
 
-A minimal GTK4 + libadwaita app for running Windows repack installers (FitGirl, DODI, etc.) on Linux via [umu-run](https://github.com/Open-Wine-Components/umu-launcher) + Proton.
+Install Windows game repacks (FitGirl, DODI, etc.) on Linux — pick a `setup.exe`, click Install, and the game shows up ready to play in [Heroic Games Launcher](https://heroicgameslauncher.com/).
 
-Pick a `setup.exe`, click Install. Automatically runs vcrun2022 via winetricks first, then launches the installer. Uses an isolated Wine prefix that won't touch your existing setup.
+## How it works
 
-Should run on any umu-run installed distro (Bazzite, CachyOS, etc) and autoinstalls it on Fedora based distros. 
+1. Pick your `setup.exe`
+2. Click **Install** — it creates a clean Wine prefix and runs the installer through [umu-run](https://github.com/Open-Wine-Components/umu-launcher) + Proton
+3. Click **Add to Heroic** — the game appears in Heroic with cover art, ready to launch
+
+No manual Wine prefix setup, no hunting through folders for the right `.exe`.
 
 ## Install
-
-Add the repo once, then install (and later update) via Flatpak:
 
 ```bash
 flatpak remote-add --if-not-exists --user repack-installer https://gettuh.github.io/Repack-installer/repackinstaller.flatpakrepo
@@ -21,17 +23,12 @@ Update anytime with:
 flatpak update --user
 ```
 
-Or grab [Release](https://github.com/GetTuh/Repack-installer/releases) - no autoupdates, you'll have to rerun the installer:
-
-```bash
-wget -O /tmp/repack-installer.flatpak https://github.com/GetTuh/Repack-installer/releases/download/latest/repack-installer.flatpak && flatpak install --user /tmp/repack-installer.flatpak
-```
-
 ## Requirements
 
-- umu-run on the host (`umu-launcher`, pre-installed on Bazzite). 
-    - On Fedora, offers to install the [umu-launcher from the relases](https://github.com/Open-Wine-Components/umu-launcher/releases)
 - Flatpak
+- [Heroic Games Launcher](https://flathub.org/apps/com.heroicgameslauncher.hgl) (optional — that's where installed games show up)
+
+That's it. `umu-run` is downloaded automatically on first run if it's missing — no extra setup.
 
 ## Build from source
 
@@ -39,7 +36,3 @@ wget -O /tmp/repack-installer.flatpak https://github.com/GetTuh/Repack-installer
 flatpak install --user flathub org.gnome.Platform//50 org.gnome.Sdk//50
 flatpak run org.flatpak.Builder --user --install --force-clean build-dir io.github.GetTuh.RepackInstaller.yml
 ```
-
-## Wine prefix
-
-Stored at `~/.local/share/repackinstaller/prefix`, separate from any existing Wine setup.
