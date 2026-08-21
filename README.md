@@ -1,14 +1,7 @@
 # Repack Installer
 
-Install Windows game repacks (FitGirl, DODI, etc.) on Linux — pick a `setup.exe`, click Install, and the game shows up ready to play in [Heroic Games Launcher](https://heroicgameslauncher.com/).
+Install Windows game repacks (FitGirl, DODI, etc.) & more on Linux — pick a `setup.exe`, click Install, and the game shows up ready to play in [Heroic Games Launcher](https://heroicgameslauncher.com/).
 
-## How it works
-
-1. Pick your `setup.exe`
-2. Click **Install** — it creates a clean Wine prefix and runs the installer through [umu-run](https://github.com/Open-Wine-Components/umu-launcher) + Proton
-3. Click **Add to Heroic** — the game appears in Heroic with cover art, ready to launch
-
-No manual Wine prefix setup, no hunting through folders for the right `.exe`.
 
 ![Screenshot](Screenshot.png)
 
@@ -28,9 +21,13 @@ flatpak update --user
 ## Requirements
 
 - Flatpak
-- [Heroic Games Launcher](https://flathub.org/apps/com.heroicgameslauncher.hgl) (optional — that's where installed games show up)
+- [Heroic Games Launcher](https://flathub.org/apps/com.heroicgameslauncher.hgl) (optional, but has nice integration)
 
-That's it. `umu-run` is downloaded automatically on first run if it's missing — no extra setup.
+ `umu-run` is downloaded automatically on first run if it's missing.
+ 
+## How it works
+
+Creates a clean Wine prefix and runs the installer through [umu-run](https://github.com/Open-Wine-Components/umu-launcher) + Proton, linking the install dir, so the other files aren't lost.
 
 ## Build from source
 
