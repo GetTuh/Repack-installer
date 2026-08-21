@@ -10,6 +10,8 @@ Install Windows game repacks (FitGirl, DODI, etc.) on Linux — pick a `setup.ex
 
 No manual Wine prefix setup, no hunting through folders for the right `.exe`.
 
+![Screenshot](Screenshot.png)
+
 ## Install
 
 ```bash
