@@ -37,6 +37,17 @@ HEROIC_CONFIG_CANDIDATES = [
     os.path.join(os.path.expanduser('~'), '.var', 'app', HEROIC_APP_ID, 'config', 'heroic'),
     os.path.join(os.path.expanduser('~'), '.config', 'heroic'),
 ]
+HEROIC_DEFAULT_PREFIX_ROOT = os.path.join(os.path.expanduser('~'), 'Games', 'Heroic', 'Prefixes')
+
+FAUGUS_APP_ID = 'io.github.Faugus.faugus-launcher'
+# (config dir, data dir, is flatpak)
+FAUGUS_CANDIDATES = [
+    (os.path.join(os.path.expanduser('~'), '.config', 'faugus-launcher'),
+     os.path.join(os.path.expanduser('~'), '.local', 'share', 'faugus-launcher'), False),
+    (os.path.join(os.path.expanduser('~'), '.var', 'app', FAUGUS_APP_ID, 'config', 'faugus-launcher'),
+     os.path.join(os.path.expanduser('~'), '.var', 'app', FAUGUS_APP_ID, 'data', 'faugus-launcher'), True),
+]
+FAUGUS_DEFAULT_PREFIX_ROOT = os.path.join(os.path.expanduser('~'), 'Faugus')
 ART_SEARCH_URL = 'https://steamgrid.usebottles.com/api/search/'
 
 _EXE_DENYLIST_SUBSTRINGS = (
@@ -142,19 +153,98 @@ def _fetch_art_url(title):
         return None
 
 
-def _heroic_is_running():
+def _read_json(path, default=None):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _heroic_prefix_root(heroic_dir):
+    config = _read_json(os.path.join(heroic_dir, 'config.json'), {})
+    defaults = config.get('defaultSettings', {}) if isinstance(config, dict) else {}
+    prefix = defaults.get('winePrefix') if isinstance(defaults, dict) else None
+    # Heroic puts per-game prefixes next to its default prefix, e.g. Prefixes/<Game Title>
+    return os.path.dirname(os.path.expanduser(prefix)) if prefix else HEROIC_DEFAULT_PREFIX_ROOT
+
+
+def _find_faugus():
+    found = []
+    for config_dir, data_dir, is_flatpak in FAUGUS_CANDIDATES:
+        if os.path.isdir(config_dir) or os.path.isdir(data_dir):
+            games = os.path.join(data_dir, 'games.json')
+            mtime = os.path.getmtime(games) if os.path.exists(games) else 0
+            found.append((mtime, config_dir, data_dir, is_flatpak))
+    if not found:
+        return None
+    # Both native and flatpak installs may exist — prefer the one used most recently.
+    _, config_dir, data_dir, is_flatpak = max(found, key=lambda f: f[0])
+    return config_dir, data_dir, is_flatpak
+
+
+def _faugus_prefix_root(config_dir):
+    config = _read_json(os.path.join(config_dir, 'config.json'), {})
+    prefix = config.get('default-prefix') if isinstance(config, dict) else None
+    return os.path.expanduser(prefix) if prefix else FAUGUS_DEFAULT_PREFIX_ROOT
+
+
+def _detect_launchers():
+    launchers = {'heroic': None, 'faugus': None}
+    heroic_dir = _find_heroic_config_dir()
+    if heroic_dir:
+        launchers['heroic'] = {
+            'kind': 'heroic',
+            'name': 'Heroic',
+            'config_dir': heroic_dir,
+            'flatpak': os.path.join('.var', 'app', HEROIC_APP_ID) in heroic_dir,
+            'app_id': HEROIC_APP_ID,
+            'proc_match': ['-x', 'heroic'],
+            'command': 'heroic',
+            'prefix_root': _heroic_prefix_root(heroic_dir),
+        }
+    faugus = _find_faugus()
+    if faugus:
+        config_dir, data_dir, is_flatpak = faugus
+        launchers['faugus'] = {
+            'kind': 'faugus',
+            'name': 'Faugus',
+            'config_dir': config_dir,
+            'data_dir': data_dir,
+            'flatpak': is_flatpak,
+            'app_id': FAUGUS_APP_ID,
+            # bracket trick stops pgrep/pkill matching the flatpak-spawn process itself
+            'proc_match': ['-f', '[f]augus-launcher'],
+            'command': 'faugus-launcher',
+            'prefix_root': _faugus_prefix_root(config_dir),
+        }
+    return launchers
+
+
+def _launcher_is_running(launcher):
+    if launcher['flatpak']:
+        result = subprocess.run(
+            ['flatpak-spawn', '--host', 'flatpak', 'ps', '--columns=application'],
+            capture_output=True, text=True
+        )
+        return launcher['app_id'] in result.stdout.split()
     result = subprocess.run(
-        ['flatpak-spawn', '--host', 'flatpak', 'ps', '--columns=application'],
-        capture_output=True, text=True
+        ['flatpak-spawn', '--host', 'pgrep'] + launcher['proc_match'],
+        capture_output=True
     )
-    return HEROIC_APP_ID in result.stdout.split()
+    return result.returncode == 0
 
 
-def _restart_heroic():
-    subprocess.run(['flatpak-spawn', '--host', 'flatpak', 'kill', HEROIC_APP_ID],
-                   capture_output=True)
-    subprocess.Popen(['flatpak-spawn', '--host', 'flatpak', 'run', HEROIC_APP_ID],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def _restart_launcher(launcher):
+    if launcher['flatpak']:
+        subprocess.run(['flatpak-spawn', '--host', 'flatpak', 'kill', launcher['app_id']],
+                       capture_output=True)
+        cmd = ['flatpak-spawn', '--host', 'flatpak', 'run', launcher['app_id']]
+    else:
+        subprocess.run(['flatpak-spawn', '--host', 'pkill'] + launcher['proc_match'],
+                       capture_output=True)
+        cmd = ['flatpak-spawn', '--host', launcher['command']]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _heroic_add_game(heroic_dir, title, executable, wineprefix, art_url=None):
@@ -195,6 +285,67 @@ def _heroic_add_game(heroic_dir, title, executable, wineprefix, art_url=None):
         json.dump({app_name: {'winePrefix': wineprefix}, 'version': 'v0', 'explicit': True}, f, indent=2)
 
     return app_name
+
+
+def _faugus_add_game(data_dir, title, executable, wineprefix):
+    games_path = os.path.join(data_dir, 'games.json')
+    games = []
+    if os.path.exists(games_path):
+        with open(games_path) as f:
+            games = json.load(f)
+        if not isinstance(games, list):
+            raise ValueError('unexpected games.json format')
+
+    taken = {g.get('gameid') for g in games if isinstance(g, dict)}
+    base_id = _slugify(title)
+    gameid, n = base_id, 2
+    while gameid in taken:
+        gameid, n = f'{base_id}-{n}', n + 1
+
+    games.append({
+        'gameid': gameid,
+        'title': title,
+        'path': executable,
+        'prefix': wineprefix,
+        'launch_arguments': '',
+        'game_arguments': '',
+        'mangohud': '',
+        'gamemode': '',
+        'sdl_enabled': '',
+        'protonfix': '',
+        'runner': 'Default',
+        'addapp_enabled': '',
+        'addapp': '',
+        'addapp_bat': '',
+        'addapp_delay': '',
+        'addapp_first': False,
+        'cover': '',
+        'lossless_enabled': False,
+        'lossless_multiplier': 1,
+        'lossless_flow': 100,
+        'lossless_performance': False,
+        'lossless_hdr': False,
+        'lossless_present': False,
+        'playtime': 0,
+        'hidden': False,
+        'no_sleep': False,
+        'category': False,
+        'icon': '',
+        'steamgriddb_id': '',
+        'pre_launch': '',
+        'post_launch': '',
+        'steam_user': '',
+        'disable_umu': '',
+        'runtime': '',
+        'last_played': '',
+    })
+
+    os.makedirs(data_dir, exist_ok=True)
+    tmp_path = games_path + '.tmp'
+    with open(tmp_path, 'w') as f:
+        json.dump(games, f, indent=4, ensure_ascii=False)
+    os.replace(tmp_path, games_path)
+    return gameid
 
 
 def _already_installed(output):
@@ -256,7 +407,10 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self._proc = None
         self._last_error = None
         self._last_prefix = None
-        self._pending_heroic = None
+        self._pending_launcher = None
+        self._launchers = _detect_launchers()
+        self._prefix_custom = False
+        self._setting_prefix = False
         self._build_ui()
         threading.Thread(target=self._check_umu, daemon=True).start()
 
@@ -296,7 +450,52 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.name_row.connect('changed', self._on_name_changed)
         file_group.add(self.name_row)
 
-        options_group = Adw.PreferencesGroup(title='Options')
+        self.launcher_group = Adw.PreferencesGroup(
+            title='Launcher',
+            description='Add the installed game to a launcher afterwards'
+        )
+        self.launcher_group.set_visible(False)
+        main_box.append(self.launcher_group)
+
+        self.launcher_checks = {}
+        group_leader = None
+        for kind, name in (('heroic', 'Heroic Games Launcher'), ('faugus', 'Faugus Launcher'),
+                           ('none', 'None')):
+            info = self._launchers.get(kind)
+            if kind == 'none':
+                subtitle = "Don't add to a launcher"
+            elif info:
+                subtitle = 'Detected' + (' (Flatpak)' if info['flatpak'] else '')
+            else:
+                subtitle = 'Not detected'
+            row = Adw.ActionRow(title=name, subtitle=subtitle)
+            check = Gtk.CheckButton()
+            check.set_valign(Gtk.Align.CENTER)
+            if group_leader:
+                check.set_group(group_leader)
+            else:
+                group_leader = check
+            check.connect('toggled', self._on_launcher_toggled)
+            row.add_prefix(check)
+            row.set_activatable_widget(check)
+            row.set_sensitive(kind == 'none' or info is not None)
+            self.launcher_group.add(row)
+            self.launcher_checks[kind] = check
+
+        default_kind = next((k for k in ('heroic', 'faugus') if self._launchers[k]), 'none')
+        self.launcher_checks[default_kind].set_active(True)
+
+        self.launcher_prefix_row = Adw.ActionRow(title="Install in launcher's prefix folder")
+        self.launcher_prefix_row.set_subtitle_lines(0)
+        self.launcher_prefix_switch = Gtk.Switch()
+        self.launcher_prefix_switch.set_valign(Gtk.Align.CENTER)
+        self.launcher_prefix_switch.connect('notify::active', self._on_prefix_mode_changed)
+        self.launcher_prefix_row.add_suffix(self.launcher_prefix_switch)
+        self.launcher_prefix_row.set_activatable_widget(self.launcher_prefix_switch)
+        self.launcher_group.add(self.launcher_prefix_row)
+
+        self.options_group = Adw.PreferencesGroup(title='Options')
+        options_group = self.options_group
         main_box.append(options_group)
 
         self.per_game_row = Adw.ActionRow(
@@ -309,15 +508,26 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.per_game_switch = Gtk.Switch()
         self.per_game_switch.set_active(True)
         self.per_game_switch.set_valign(Gtk.Align.CENTER)
-        self.per_game_switch.connect('notify::active', self._on_name_changed)
+        self.per_game_switch.connect('notify::active', self._on_prefix_mode_changed)
         self.per_game_row.add_suffix(self.per_game_switch)
         self.per_game_row.set_activatable_widget(self.per_game_switch)
         options_group.add(self.per_game_row)
 
-        self.prefix_preview_row = Adw.ActionRow(title='Wine prefix location')
-        self.prefix_preview_row.set_subtitle('Select a setup.exe first')
-        self.prefix_preview_row.set_subtitle_lines(0)
-        options_group.add(self.prefix_preview_row)
+        self.prefix_entry_row = Adw.EntryRow(title='Wine prefix location')
+        self.prefix_entry_row.set_sensitive(False)
+        self.prefix_entry_row.connect('changed', self._on_prefix_edited)
+        prefix_reset_btn = Gtk.Button(icon_name='edit-undo-symbolic')
+        prefix_reset_btn.set_valign(Gtk.Align.CENTER)
+        prefix_reset_btn.set_tooltip_text('Reset to the automatic location')
+        prefix_reset_btn.connect('clicked', self._on_reset_prefix)
+        self.prefix_entry_row.add_suffix(prefix_reset_btn)
+        prefix_browse_btn = Gtk.Button(icon_name='folder-open-symbolic')
+        prefix_browse_btn.set_valign(Gtk.Align.CENTER)
+        prefix_browse_btn.set_tooltip_text('Choose a folder for the Wine prefix')
+        prefix_browse_btn.connect('clicked', self._on_browse_prefix)
+        self.prefix_entry_row.add_suffix(prefix_browse_btn)
+        options_group.add(self.prefix_entry_row)
+        self._update_launcher_prefix_row()
 
         status_group = Adw.PreferencesGroup(title='Status')
         main_box.append(status_group)
@@ -390,26 +600,25 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.exe_row.add_suffix(exe_copy_btn)
         self.prefix_group.add(self.exe_row)
 
-        self.heroic_row = Adw.ActionRow()
-        self.heroic_row.set_subtitle_lines(0)
-        self.heroic_row.set_visible(False)
-        self.heroic_add_btn = Gtk.Button(label='Add')
-        self.heroic_add_btn.add_css_class('suggested-action')
-        self.heroic_add_btn.set_valign(Gtk.Align.CENTER)
-        self.heroic_add_btn.connect('clicked', self._on_add_to_heroic)
-        self.heroic_row.add_suffix(self.heroic_add_btn)
-        self.prefix_group.add(self.heroic_row)
+        self.launcher_row = Adw.ActionRow()
+        self.launcher_row.set_subtitle_lines(0)
+        self.launcher_row.set_visible(False)
+        self.launcher_add_btn = Gtk.Button(label='Add')
+        self.launcher_add_btn.add_css_class('suggested-action')
+        self.launcher_add_btn.set_valign(Gtk.Align.CENTER)
+        self.launcher_add_btn.connect('clicked', self._on_add_to_launcher)
+        self.launcher_row.add_suffix(self.launcher_add_btn)
+        self.prefix_group.add(self.launcher_row)
 
-        self.heroic_restart_row = Adw.ActionRow(
-            title='Heroic is running',
+        self.restart_row = Adw.ActionRow(
             subtitle='Restart it to see the new game in your library'
         )
-        self.heroic_restart_row.set_visible(False)
-        self.heroic_restart_btn = Gtk.Button(label='Restart Heroic')
-        self.heroic_restart_btn.set_valign(Gtk.Align.CENTER)
-        self.heroic_restart_btn.connect('clicked', self._on_restart_heroic)
-        self.heroic_restart_row.add_suffix(self.heroic_restart_btn)
-        self.prefix_group.add(self.heroic_restart_row)
+        self.restart_row.set_visible(False)
+        self.restart_btn = Gtk.Button()
+        self.restart_btn.set_valign(Gtk.Align.CENTER)
+        self.restart_btn.connect('clicked', self._on_restart_launcher)
+        self.restart_row.add_suffix(self.restart_btn)
+        self.prefix_group.add(self.restart_row)
 
         log_label = Gtk.Label(label='Log', xalign=0)
         log_label.add_css_class('heading')
@@ -594,45 +803,129 @@ class WineInstallerWindow(Adw.ApplicationWindow):
             self.name_row.set_text(_guess_title(self._exe_path))
             self.install_btn.set_sensitive(True)
             self._set_status('Ready', f'Selected: {name}', False)
+            self._prefix_custom = False
+            self.prefix_entry_row.set_sensitive(True)
+            self.launcher_group.set_visible(True)
             self._update_prefix_preview()
 
     def _on_name_changed(self, *_args):
         self._update_prefix_preview()
+
+    def _on_prefix_mode_changed(self, *_args):
+        # Switching the prefix mode is an explicit choice, so drop any hand-typed path.
+        self._prefix_custom = False
+        self._update_prefix_preview()
+
+    def _selected_launcher(self):
+        for kind, check in self.launcher_checks.items():
+            if check.get_active():
+                return self._launchers.get(kind)
+        return None
+
+    def _on_launcher_toggled(self, check):
+        if not check.get_active() or not hasattr(self, 'prefix_entry_row'):
+            return
+        self._update_launcher_prefix_row()
+        if self.launcher_prefix_switch.get_active():
+            self._on_prefix_mode_changed()
+
+    def _update_launcher_prefix_row(self):
+        launcher = self._selected_launcher()
+        if launcher:
+            self.launcher_prefix_row.set_subtitle(launcher['prefix_root'])
+            self.launcher_prefix_row.set_sensitive(True)
+        else:
+            self.launcher_prefix_row.set_subtitle('Select Heroic or Faugus to use its prefix folder')
+            self.launcher_prefix_row.set_sensitive(False)
+            self.launcher_prefix_switch.set_active(False)
+        self.per_game_row.set_sensitive(not self._use_launcher_prefix())
+
+    def _use_launcher_prefix(self):
+        return self.launcher_prefix_switch.get_active() and self._selected_launcher() is not None
 
     def _effective_title(self):
         text = self.name_row.get_text().strip()
         return text or (_guess_title(self._exe_path) if self._exe_path else 'Installed Game')
 
     def _compute_wineprefix(self):
+        slug = _slugify(self._effective_title())
+        if self._use_launcher_prefix():
+            return os.path.join(self._selected_launcher()['prefix_root'], slug)
         if self.per_game_switch.get_active():
-            return os.path.join(GAMES_PREFIX_ROOT, _slugify(self._effective_title()))
+            return os.path.join(GAMES_PREFIX_ROOT, slug)
         return SHARED_WINEPREFIX
 
+    def _effective_wineprefix(self):
+        text = os.path.expanduser(self.prefix_entry_row.get_text().strip())
+        return os.path.abspath(text) if text else self._compute_wineprefix()
+
     def _update_prefix_preview(self):
+        self.per_game_row.set_sensitive(not self._use_launcher_prefix())
         if not self._exe_path:
-            self.prefix_preview_row.set_subtitle('Select a setup.exe first')
+            self.options_group.set_description('Select a setup.exe first')
             return
-        path = self._compute_wineprefix()
-        note = ' (already exists — will reuse)' if os.path.isdir(path) else ' (will be created)'
-        self.prefix_preview_row.set_subtitle(path + note)
+        if not self._prefix_custom:
+            self._setting_prefix = True
+            self.prefix_entry_row.set_text(self._compute_wineprefix())
+            self._setting_prefix = False
+        self._update_prefix_note()
+
+    def _update_prefix_note(self):
+        path = self._effective_wineprefix()
+        if os.path.isdir(os.path.join(path, 'drive_c')):
+            note = 'Prefix already exists — will reuse'
+        elif os.path.isdir(path) and os.listdir(path):
+            note = 'Folder exists and is not empty — a prefix will be created inside it'
+        else:
+            note = 'Prefix will be created'
+        self.options_group.set_description(note)
+
+    def _on_prefix_edited(self, *_args):
+        if self._setting_prefix:
+            return
+        self._prefix_custom = True
+        self._update_prefix_note()
+
+    def _on_reset_prefix(self, _btn):
+        self._prefix_custom = False
+        self._update_prefix_preview()
+
+    def _on_browse_prefix(self, _btn):
+        dialog = Gtk.FileDialog(title='Select Wine Prefix Folder')
+        current = self._effective_wineprefix()
+        for folder in (current, os.path.dirname(current)):
+            if os.path.isdir(folder):
+                dialog.set_initial_folder(Gio.File.new_for_path(folder))
+                break
+        dialog.select_folder(self, None, self._on_prefix_folder_chosen)
+
+    def _on_prefix_folder_chosen(self, dialog, result):
+        try:
+            folder = dialog.select_folder_finish(result)
+        except GLib.Error:
+            return
+        if folder:
+            # Setting the text fires 'changed', which marks the prefix as custom.
+            self.prefix_entry_row.set_text(folder.get_path())
 
     def _on_install(self, _btn):
         if not self._exe_path:
             return
+        wineprefix = self._effective_wineprefix()
+        title = self._effective_title()
+        launcher = self._selected_launcher()
         self.install_btn.set_sensitive(False)
         self.browse_btn.set_sensitive(False)
         self.prefix_group.set_visible(False)
-        self.heroic_row.set_visible(False)
-        self.heroic_restart_row.set_visible(False)
-        self.heroic_restart_row.set_subtitle('Restart it to see the new game in your library')
-        self.heroic_restart_btn.set_sensitive(True)
+        self.launcher_row.set_visible(False)
+        self.restart_row.set_visible(False)
+        self.restart_btn.set_sensitive(True)
         self._set_status('Starting…', 'Launching umu-run…', True)
-        threading.Thread(target=self._run_install, daemon=True).start()
+        threading.Thread(target=self._run_install, args=(wineprefix, title, launcher),
+                         daemon=True).start()
 
-    def _run_install(self):
+    def _run_install(self, wineprefix, title, launcher):
         exe_dir = os.path.dirname(self._exe_path)
-        wineprefix = self._compute_wineprefix()
-        title = self._effective_title()
         self._log(f'Using Wine prefix: {wineprefix}')
 
         self._idle(self._set_status, 'Installing vcrun2022…', 'winetricks vcrun2022', True)
@@ -671,11 +964,11 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         else:
             self._idle(self._set_status, 'Done', 'Installer finished.', False)
 
-        self._idle(self._finish_install, wineprefix, title, candidates)
+        self._idle(self._finish_install, wineprefix, title, candidates, launcher)
         self._idle(self.install_btn.set_sensitive, True)
         self._idle(self.browse_btn.set_sensitive, True)
 
-    def _finish_install(self, wineprefix, title, candidates):
+    def _finish_install(self, wineprefix, title, candidates, launcher):
         self._last_prefix = wineprefix
         self.prefix_row.set_subtitle(wineprefix)
         self.prefix_group.set_visible(True)
@@ -698,23 +991,26 @@ class WineInstallerWindow(Adw.ApplicationWindow):
         self.exe_row.set_text(executable)
         self.exe_row.set_visible(True)
 
-        heroic_dir = _find_heroic_config_dir()
-        if not heroic_dir:
-            self.heroic_row.set_visible(False)
-            self._log('Heroic not detected on this system')
+        if not launcher:
+            self._pending_launcher = None
+            self.launcher_row.set_visible(False)
             return GLib.SOURCE_REMOVE
 
-        self._pending_heroic = {'heroic_dir': heroic_dir, 'title': title, 'wineprefix': wineprefix}
-        self.heroic_row.set_title('Add to Heroic')
-        self.heroic_row.set_subtitle(f'Uses the game name and executable above for "{title}"')
-        self.heroic_add_btn.set_label('Add')
-        self.heroic_add_btn.set_sensitive(bool(executable))
-        self.heroic_row.set_visible(True)
+        name = launcher['name']
+        self._pending_launcher = {'launcher': launcher, 'title': title, 'wineprefix': wineprefix}
+        self.launcher_row.set_title(f'Add to {name}')
+        self.launcher_row.set_subtitle(f'Uses the game name and executable above for "{title}"')
+        self.launcher_add_btn.set_label('Add')
+        self.launcher_add_btn.set_sensitive(bool(executable))
+        self.launcher_row.set_visible(True)
+        self.restart_row.set_title(f'{name} is running')
+        self.restart_row.set_subtitle('Restart it to see the new game in your library')
+        self.restart_btn.set_label(f'Restart {name}')
         return GLib.SOURCE_REMOVE
 
     def _on_exe_changed(self, *_args):
-        if self._pending_heroic is not None and self.heroic_add_btn.get_label() != 'Added':
-            self.heroic_add_btn.set_sensitive(bool(self.exe_row.get_text().strip()))
+        if self._pending_launcher is not None and self.launcher_add_btn.get_label() != 'Added':
+            self.launcher_add_btn.set_sensitive(bool(self.exe_row.get_text().strip()))
 
     def _on_browse_exe(self, _btn):
         exe_filter = Gtk.FileFilter()
@@ -745,48 +1041,57 @@ class WineInstallerWindow(Adw.ApplicationWindow):
             self.exe_row.set_text(file.get_path())
             self.exe_row.remove_css_class('warning')
 
-    def _on_add_to_heroic(self, _btn):
-        info = self._pending_heroic
+    def _on_add_to_launcher(self, _btn):
+        info = self._pending_launcher
         executable = self.exe_row.get_text().strip()
         if not info or not executable:
             return
-        self.heroic_add_btn.set_sensitive(False)
-        self.heroic_add_btn.set_label('Adding…')
-        threading.Thread(target=self._add_to_heroic_flow, args=(info, executable), daemon=True).start()
+        self.launcher_add_btn.set_sensitive(False)
+        self.launcher_add_btn.set_label('Adding…')
+        threading.Thread(target=self._add_to_launcher_flow, args=(info, executable),
+                         daemon=True).start()
 
-    def _add_to_heroic_flow(self, info, executable):
+    def _add_to_launcher_flow(self, info, executable):
+        launcher = info['launcher']
+        name = launcher['name']
         title = info['title']
-        self._log(f'Searching cover art for "{title}"…')
-        art_url = _fetch_art_url(title)
-        self._log(f'Found cover art: {art_url}' if art_url else 'No cover art found')
-
         try:
-            app_name = _heroic_add_game(
-                info['heroic_dir'], title, executable, info['wineprefix'], art_url=art_url)
-        except (OSError, json.JSONDecodeError) as e:
-            self._log(f'Could not update Heroic library: {e}')
-            self._idle(self.heroic_row.set_subtitle, f'Failed: {e}')
-            self._idle(self.heroic_add_btn.set_sensitive, True)
-            self._idle(self.heroic_add_btn.set_label, 'Add')
+            if launcher['kind'] == 'heroic':
+                self._log(f'Searching cover art for "{title}"…')
+                art_url = _fetch_art_url(title)
+                self._log(f'Found cover art: {art_url}' if art_url else 'No cover art found')
+                game_id = _heroic_add_game(launcher['config_dir'], title, executable,
+                                           info['wineprefix'], art_url=art_url)
+            else:
+                game_id = _faugus_add_game(launcher['data_dir'], title, executable,
+                                           info['wineprefix'])
+        except (OSError, ValueError) as e:
+            self._log(f'Could not update {name} library: {e}')
+            self._idle(self.launcher_row.set_subtitle, f'Failed: {e}')
+            self._idle(self.launcher_add_btn.set_sensitive, True)
+            self._idle(self.launcher_add_btn.set_label, 'Add')
             return
 
-        self._idle(self.heroic_row.set_title, 'Added to Heroic')
-        self._idle(self.heroic_row.set_subtitle, f'"{title}" → {executable}')
-        self._idle(self.heroic_add_btn.set_label, 'Added')
-        self._log(f'Added to Heroic library as "{title}" (app_name={app_name})')
+        self._idle(self.launcher_row.set_title, f'Added to {name}')
+        self._idle(self.launcher_row.set_subtitle, f'"{title}" → {executable}')
+        self._idle(self.launcher_add_btn.set_label, 'Added')
+        self._log(f'Added to {name} library as "{title}" (id={game_id})')
 
-        if _heroic_is_running():
-            self._idle(self.heroic_restart_row.set_visible, True)
+        if _launcher_is_running(launcher):
+            self._idle(self.restart_row.set_visible, True)
 
-    def _on_restart_heroic(self, _btn):
-        self.heroic_restart_btn.set_sensitive(False)
-        self.heroic_restart_row.set_subtitle('Restarting…')
-        threading.Thread(target=self._restart_heroic_flow, daemon=True).start()
+    def _on_restart_launcher(self, _btn):
+        if not self._pending_launcher:
+            return
+        self.restart_btn.set_sensitive(False)
+        self.restart_row.set_subtitle('Restarting…')
+        threading.Thread(target=self._restart_launcher_flow,
+                         args=(self._pending_launcher['launcher'],), daemon=True).start()
 
-    def _restart_heroic_flow(self):
-        _restart_heroic()
-        self._idle(self.heroic_restart_row.set_subtitle, 'Restarted')
-        self._log('Restarted Heroic')
+    def _restart_launcher_flow(self, launcher):
+        _restart_launcher(launcher)
+        self._idle(self.restart_row.set_subtitle, 'Restarted')
+        self._log(f'Restarted {launcher["name"]}')
 
     def _on_copy_prefix(self, _btn):
         if self._last_prefix:

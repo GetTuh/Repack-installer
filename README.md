@@ -1,6 +1,6 @@
 # Repack Installer
 
-Install Windows game repacks (FitGirl, DODI, etc.) & more on Linux — pick a `setup.exe`, click Install, and the game shows up ready to play in [Heroic Games Launcher](https://heroicgameslauncher.com/).
+Install Windows game repacks (FitGirl, DODI, etc.) & more on Linux — pick a `setup.exe`, click Install, and the game shows up ready to play in [Heroic Games Launcher](https://heroicgameslauncher.com/) or [Faugus Launcher](https://github.com/Faugus/faugus-launcher).
 
 
 ![Screenshot](Screenshot.png)
@@ -21,7 +21,7 @@ flatpak update --user
 ## Requirements
 
 - Flatpak
-- [Heroic Games Launcher](https://flathub.org/apps/com.heroicgameslauncher.hgl) (optional, but has nice integration)
+- [Heroic Games Launcher](https://flathub.org/apps/com.heroicgameslauncher.hgl) or [Faugus Launcher](https://flathub.org/apps/io.github.Faugus.faugus-launcher) (optional, but has nice integration)
 
  `umu-run` is downloaded automatically on first run if it's missing.
  
